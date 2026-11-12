@@ -138,8 +138,8 @@ export function buildModelCar(def, paintHex, template) {
   const beams = [];
   for (const s of [-1, 1]) {
     const light = new THREE.SpotLight(0xffe8c4, 0, 72, 0.4, 0.62, 1.05);
-    light.position.set(s * spec.width * 0.3, 0.62, -spec.length / 2 + 0.15);
-    light.target.position.set(s * spec.width * 0.75, 0.02, -spec.length / 2 - 34);
+    light.position.set(s * spec.width * 0.3, 0.62, spec.length / 2 - 0.15);
+    light.target.position.set(s * spec.width * 0.75, 0.02, spec.length / 2 + 34);
     group.add(light, light.target);
     beams.push(light);
   }
