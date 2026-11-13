@@ -9,7 +9,13 @@ export const dampVec = (v, target, k, dt) => v.addScaledVector(target.clone().su
 export const sgn = (v) => (v < 0 ? -1 : 1);
 export const round = (v, n = 0.1) => Math.round(v / n) * n;
 export const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-export const isTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+/* iPadOS Safari reports "pointer: fine" when a trackpad is attached and
+   can report a coarse pointer on a desktop with a touchscreen. The
+   reliable signals for "there is a finger, show the pads" are touch
+   points and the absence of a hover-capable fine pointer. */
+export const isTouch = navigator.maxTouchPoints > 0
+  && (matchMedia('(pointer: coarse)').matches || !matchMedia('(hover: hover)').matches);
+export const isTablet = isTouch && Math.min(screen.width, screen.height) >= 700;
 
 export function rng(seed) {
   let a = seed | 0;
@@ -274,8 +280,10 @@ export const CARS = [
 ];
 
 export const QUALITY = {
-  high: { dpr: 1.9, shadow: 2048, radius: 4, terrainRes: 34, foliage: 1.0, aa: true, water: true },
-  balanced: { dpr: 1.4, shadow: 1024, radius: 3, terrainRes: 26, foliage: 0.7, aa: true, water: true },
+  /* dpr is capped again against devicePixelRatio, and the streamed
+     radius is what keeps a tablet's draw calls under control */
+  high: { dpr: 1.75, shadow: 2048, radius: 4, terrainRes: 34, foliage: 1.0, aa: true, water: true },
+  balanced: { dpr: 1.35, shadow: 1024, radius: 3, terrainRes: 26, foliage: 0.7, aa: true, water: true },
   eco: { dpr: 1.0, shadow: 0, radius: 2, terrainRes: 20, foliage: 0.45, aa: false, water: true },
 };
 
