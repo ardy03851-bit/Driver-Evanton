@@ -704,11 +704,16 @@ export class World {
           this.terrain.delete(k);
         }
       }
+      /* only keep terrain jobs for chunks that are still in range, and
+         never queue the same chunk twice — driving fast used to leave a
+         permanent backlog behind the car */
+      this.pending = this.pending.filter((p) => p.kind !== 'terrain'
+        || (Math.abs(p.x - cx) <= radius && Math.abs(p.z - cz) <= radius && !this.terrain.has(p.key)));
       for (let dz = -radius; dz <= radius; dz++) {
         for (let dx = -radius; dx <= radius; dx++) {
           const tx = cx + dx, tz = cz + dz;
           const k = `${tx},${tz}`;
-          if (!this.terrain.has(k)) {
+          if (!this.terrain.has(k) && !this.pending.some((p) => p.kind === 'terrain' && p.key === k)) {
             this.pending.push({ kind: 'terrain', x: tx, z: tz, key: k });
           }
         }
@@ -726,7 +731,15 @@ export class World {
         this.roads.delete(k);
       }
     }
-    for (let i = ri - Math.floor(roadRadius * 0.75); i <= ri + roadRadius; i++) {
+    /* A road chunk that fell out of the window was still sitting in the
+       queue (or already built) would be re-requested every frame, so the
+       backlog grew forever on a long drive. Keep the queue to chunks that
+       are still wanted, and never queue a chunk twice. */
+    const lo = ri - Math.floor(roadRadius * 0.75), hi = ri + roadRadius;
+    const wanted = new Set();
+    for (let i = lo; i <= hi; i++) wanted.add(i);
+    this.pending = this.pending.filter((p) => (p.kind !== 'road' ? true : wanted.has(p.index) && !this.roads.has(p.index)));
+    for (let i = lo; i <= hi; i++) {
       if (!this.roads.has(i) && !this.pending.some((p) => p.kind === 'road' && p.index === i)) {
         this.pending.push({ kind: 'road', index: i, key: `r${i}` });
       }

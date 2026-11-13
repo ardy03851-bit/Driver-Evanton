@@ -36,7 +36,7 @@ body{
   overscroll-behavior:none;
   touch-action:none;
 }
-button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer;touch-action:manipulation}
+button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 ::selection{background:rgba(255,194,122,.3)}
 :focus-visible{outline:1.5px solid rgba(255,194,122,.7);outline-offset:3px}
 
@@ -148,8 +148,8 @@ body.booted .boot{opacity:0;visibility:hidden}
 .boot-note{margin-top:14px;font-size:10.5px;color:var(--ink-38);letter-spacing:.04em;height:14px}
 
 /* ── HUD shell ──────────────────────────────────────────────── */
-.hud{position:fixed;inset:0;z-index:20;pointer-events:none;opacity:0;transition:opacity 1s var(--ease)}
-body.driving .hud{opacity:1}
+.hud{position:fixed;inset:0;z-index:20;pointer-events:none;opacity:0;visibility:hidden;transition:opacity 1s var(--ease),visibility 0s .9s}
+body.driving .hud{opacity:1;visibility:visible;transition:opacity 1s var(--ease),visibility 0s 0s}
 .hud>*{pointer-events:auto}
 .pod{position:absolute;bottom:28px;display:flex;gap:14px;align-items:flex-end;transform:translateY(26px);opacity:0;filter:blur(8px);transition:transform 1.1s var(--ease),opacity .9s var(--ease),filter .9s var(--ease)}
 body.driving .pod{transform:none;opacity:1;filter:none}
@@ -264,21 +264,40 @@ body.driving .hint.fade{opacity:0;transform:translate(-50%,10px);transition-dela
 .hint-key.wide{padding:0 6px}
 .hint-sep{width:1px;height:12px;background:rgba(255,255,255,.1);margin:0 4px}
 
-/* touch */
-.touch{display:none;position:absolute;inset:0;pointer-events:none}
+/* ── touch & tablet controls ─────────────────────────────────
+   Fingers are not cursors: pads are sized for a thumb, kept clear of
+   the instrument cluster, and pinned inside the safe area so the
+   iPad's home indicator and rounded corners don't eat them. */
+.touch{display:none;position:absolute;inset:0;pointer-events:none;z-index:5}
 .touch button{pointer-events:auto}
 body.touch-ui .touch{display:block}
-.touch-steer,.touch-pedals{position:absolute;bottom:26px;display:flex;gap:12px}
-.touch-steer{left:22px}
-.touch-pedals{right:22px}
-.touch-pad{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;font-size:8px;letter-spacing:.1em}
-.touch-pad .ic{width:22px;height:22px}
+body.touch-ui .hint:not(.touch-hint){display:none}
+.touch-hint{display:none}
+body.touch-ui .touch-hint{
+  display:flex;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 132px);
+  transform:translate(-50%,0);max-width:calc(100% - 40px);white-space:normal;text-align:center;
+}
+body.touch-ui.driving .touch-hint{opacity:1;transform:translate(-50%,0);transition-delay:1.1s}
+body.touch-ui.driving .touch-hint.fade{opacity:0;transform:translate(-50%,10px);transition-delay:0s}
+body.touch-ui #view{cursor:default}
+.touch-steer,.touch-pedals{position:absolute;display:flex;gap:14px;align-items:flex-end}
+.touch-steer{left:calc(env(safe-area-inset-left,0px) + 22px);bottom:calc(env(safe-area-inset-bottom,0px) + 22px)}
+.touch-pedals{right:calc(env(safe-area-inset-right,0px) + 22px);bottom:calc(env(safe-area-inset-bottom,0px) + 22px)}
+.touch-pad{
+  -webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;touch-action:none;
+  width:76px;height:76px;border-radius:50%;display:grid;place-items:center;
+  font-size:9px;letter-spacing:.1em;transition:transform .14s var(--ease),background .14s,box-shadow .2s;
+}
+.touch-pad .ic{width:26px;height:26px}
 .touch-steer .touch-pad:first-child .ic{transform:rotate(180deg)}
-.touch-pad.gas{width:74px;height:74px;border-color:rgba(255,194,122,.3);color:var(--amber)}
-.touch-pad.brake{color:rgba(255,138,76,.9)}
-.touch-pad.held{transform:scale(.93);background:rgba(255,255,255,.22)}
-body.touch-ui .pod-trip{display:none}
-body.touch-ui .hint{display:none}
+.touch-pad.gas{width:92px;height:92px;border-color:rgba(255,194,122,.32);color:var(--amber);font-weight:600}
+.touch-pad.brake{width:80px;height:80px;color:rgba(255,138,76,.92)}
+.touch-pad.handbrake{width:62px;height:62px;color:var(--ink-55);font-size:7px}
+.touch-pad.handbrake .ic{width:19px;height:19px}
+.touch-pad.held{transform:scale(.94);background:rgba(255,255,255,.22);box-shadow:0 0 0 3px rgba(255,194,122,.2),inset 0 1px 0 rgba(255,255,255,.4)}
+.touch-pad.gas.held{color:#fff;border-color:rgba(255,194,122,.62)}
+.touch-pad.brake.held{color:#fff}
 
 /* ── intro ──────────────────────────────────────────────────── */
 .intro{
@@ -444,7 +463,7 @@ body.driving .intro{opacity:0;visibility:hidden;pointer-events:none}
 .set-label b{font-size:11px;font-weight:450;letter-spacing:.01em;color:var(--ink-80)}
 .set-label span{font-size:8.5px;color:var(--ink-38);letter-spacing:.04em}
 .seg{display:flex;gap:3px;padding:3px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07)}
-.seg button{padding:7px 12px;border-radius:7px;font-size:8.5px;letter-spacing:.06em;color:var(--ink-38);transition:all .3s var(--ease);text-transform:uppercase}
+.seg button{padding:7px 12px;border-radius:7px;font-size:8.5px;letter-spacing:.06em;color:var(--ink-38);transition:all .3s var(--ease);text-transform:uppercase;white-space:nowrap}
 .seg button.sel{background:rgba(255,255,255,.13);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
 .toggle{width:42px;height:23px;border-radius:100px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);position:relative;transition:background .35s var(--ease);flex:none}
 .toggle::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:rgba(255,255,255,.7);transition:transform .4s var(--spring),background .3s;box-shadow:0 2px 6px rgba(0,0,0,.35)}
@@ -468,12 +487,13 @@ body.driving .intro{opacity:0;visibility:hidden;pointer-events:none}
 .p-action .ic{width:16px;height:16px;color:var(--ink-38);transition:color .3s}
 .p-action:hover .ic{color:var(--amber)}
 .pause-foot{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:20px;font-size:8px;color:var(--ink-38);letter-spacing:.04em}
+.pause-foot.touch-foot{display:none}
 .pause-foot span{font-family:var(--mono);padding:2px 5px;border:1px solid rgba(255,255,255,.12);border-radius:4px;color:var(--ink-55)}
 .pause-foot i{width:2px;height:2px;border-radius:50%;background:rgba(255,255,255,.2)}
 
 /* map */
 .sheet.map-sheet{padding:0}
-.map-glass{width:min(1180px,94vw);height:min(86vh,780px);border-radius:30px;padding:22px 24px;display:flex;flex-direction:column;transform:scale(.97);opacity:.3;transition:all .7s var(--ease)}
+.map-glass{width:min(1180px,94vw);height:min(86vh,780px);height:min(86dvh,780px);border-radius:30px;padding:22px 24px;display:flex;flex-direction:column;transform:scale(.97);opacity:.3;transition:all .7s var(--ease)}
 .sheet.on .map-glass{transform:none;opacity:1}
 .map-head{display:flex;align-items:flex-start;gap:30px}
 .map-head h2{font-size:24px;font-weight:300;letter-spacing:-.03em;margin-top:5px}
@@ -542,16 +562,69 @@ body.photo .photo-ui{opacity:1;visibility:visible;transition:opacity .6s var(--e
   .intro-foot{flex-direction:column;align-items:flex-start;gap:12px}
   .intro-cars{max-height:96px;overflow:hidden}
   .garage-wrap{grid-template-columns:1fr;overflow-y:auto}
-  .car-list{flex-direction:row;overflow-x:auto;padding-bottom:4px}
+  .car-list{flex-direction:row;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .car-list::-webkit-scrollbar{display:none}
+  .car-item{scroll-snap-align:start}
   .car-item{flex:none;min-width:150px}
   .car-detail{overflow:visible}
   .stats{grid-template-columns:1fr 1fr}
-  .sheet-glass{padding:20px;border-radius:26px;max-height:92vh}
+  .sheet-glass{padding:20px;border-radius:26px;max-height:92vh;max-height:92dvh}
   .sheet-head h2{font-size:21px}
-  .map-glass{width:96vw;height:84vh;padding:16px}
+  .map-glass{width:96vw;height:84vh;height:84dvh;padding:16px}
   .map-stats{display:none}
   .hint{display:none}
   .intro-tip{display:none}
+}
+
+/* ── iPad / tablet, landscape ─────────────────────────────────
+   Steering under the left thumb, pedals under the right, and the
+   instrument cluster tucked into the top-right corner so nothing
+   overlaps the controls. */
+@media (pointer:coarse){
+  .pod-dial{right:calc(env(safe-area-inset-right,0px) + 24px);bottom:auto;top:calc(env(safe-area-inset-top,0px) + 18px)}
+  .dial-shell{padding:14px 16px 12px}
+  .pod-trip{left:calc(env(safe-area-inset-left,0px) + 24px);bottom:calc(env(safe-area-inset-bottom,0px) + 20px)}
+  .pod-shape{width:226px;padding:18px 18px 15px}
+  .toast-wrap{top:calc(env(safe-area-inset-top,0px) + 20px)}
+  .sheet{padding:calc(env(safe-area-inset-top,0px) + 16px) calc(env(safe-area-inset-right,0px) + 16px) calc(env(safe-area-inset-bottom,0px) + 16px) calc(env(safe-area-inset-left,0px) + 16px)}
+  .sheet-glass{max-height:min(88vh,calc(100vh - 32px));max-height:min(88dvh,calc(100dvh - 32px))}
+  .photo-bar{bottom:calc(env(safe-area-inset-bottom,0px) + 22px)}
+  .photo-top{top:calc(env(safe-area-inset-top,0px) + 18px)}
+}
+@media (pointer:coarse) and (min-width:760px){
+  .dial-shell{width:250px}
+  .dial-face{width:186px;height:186px}
+  .dial-speed{font-size:52px}
+  .orb{width:44px;height:44px}
+  .orb .ic{width:18px;height:18px}
+  .dial-actions{gap:10px}
+  .touch-pad{width:78px;height:78px}
+  .touch-pad.gas{width:96px;height:96px;font-size:10px}
+  .touch-pad.brake{width:84px;height:84px}
+  .touch-pad.handbrake{width:62px;height:62px}
+  .touch-steer{gap:18px;left:calc(env(safe-area-inset-left,0px) + 30px);bottom:calc(env(safe-area-inset-bottom,0px) + 28px)}
+  .touch-pedals{gap:16px;right:calc(env(safe-area-inset-right,0px) + 30px);bottom:calc(env(safe-area-inset-bottom,0px) + 28px)}
+  .intro-main{margin-top:clamp(28px,7vh,92px)}
+  .intro-title{font-size:clamp(64px,9vw,120px)}
+}
+
+/* iPad / tablet, portrait — the cluster sits top-right where it cannot
+   cover the road, and the pads tuck into the bottom corners. */
+@media (pointer:coarse) and (orientation:portrait){
+  .pod-dial{top:calc(env(safe-area-inset-top,0px) + 14px);bottom:auto;right:calc(env(safe-area-inset-right,0px) + 14px)}
+  .dial-shell{width:190px;padding:11px 13px 9px}
+  .dial-face{width:138px;height:138px}
+  .dial-speed{font-size:36px}
+  .dial-actions{margin-top:8px;gap:8px}
+  .orb{width:40px;height:40px}
+  .touch-steer{left:calc(env(safe-area-inset-left,0px) + 18px);bottom:calc(env(safe-area-inset-bottom,0px) + 24px)}
+  .touch-pedals{right:calc(env(safe-area-inset-right,0px) + 18px);left:auto;transform:none;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);gap:12px}
+  .touch-pad{width:74px;height:74px}
+  .touch-pad.gas{width:88px;height:88px}
+  .touch-pad.brake{width:78px;height:78px}
+  .touch-pad.handbrake{width:60px;height:60px}
+  .pod-trip{left:calc(env(safe-area-inset-left,0px) + 16px);bottom:calc(env(safe-area-inset-bottom,0px) + 116px)}
+  .pod-shape{width:210px}
 }
 @media (max-width:640px){
   .intro{padding:22px 20px 28px;overflow-y:auto;overscroll-behavior:contain;background:linear-gradient(180deg,rgba(5,7,9,.9) 0%,rgba(5,7,9,.5) 42%,rgba(5,7,9,.28) 62%,rgba(5,7,9,.82) 100%)}
@@ -564,19 +637,31 @@ body.photo .photo-ui{opacity:1;visibility:visible;transition:opacity .6s var(--e
   .intro-car{flex:none}
   .pause-grid{grid-template-columns:1fr 1fr}
   .set-row{flex-direction:column;align-items:flex-start;gap:8px}
-  .dial-actions .orb:nth-child(2){display:none}
-  .pod-dial{top:54px;bottom:auto;right:10px}
+  .pod-dial{top:calc(env(safe-area-inset-top,0px) + 10px);bottom:auto;right:10px}
   .dial-shell{width:168px;padding:10px 12px 9px}
   .dial-face{width:126px;height:126px}
   .dial-speed{font-size:32px}
   .dial-rpm{padding:0}
-  .touch-steer{left:14px;bottom:18px}
-  .touch-pedals{right:16px;bottom:92px;top:auto}
-  .touch-pad{width:58px;height:58px}
-  .touch-pad.gas{width:62px;height:62px}
-  body.touch-ui .pod-dial{top:54px;bottom:auto}
+  .touch-steer{left:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px)}
+  .touch-pedals{right:14px;left:auto;transform:none;bottom:calc(env(safe-area-inset-bottom,0px) + 18px)}
+  .touch-pad{width:64px;height:64px}
+  .touch-pad.gas{width:72px;height:72px}
+  .touch-pad.brake{width:66px;height:66px}
+  .touch-pad.handbrake{width:54px;height:54px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
   .grain{display:none}
+}
+
+/* ── tablet performance trims ─────────────────────────────────── */
+@media (pointer:coarse){
+  :root{--blur:22px}
+  .pause-foot{display:none}
+  .pause-foot.touch-foot{display:flex}
+  .hint-key,.hint-sep{display:none}
+  .grain{display:none}
+  .glassy{backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%)}
+  .orb{backdrop-filter:blur(12px) saturate(140%);-webkit-backdrop-filter:blur(12px) saturate(140%)}
+  .pod-tab{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 }

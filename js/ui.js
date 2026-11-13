@@ -1,4 +1,4 @@
-import { CARS, PAINTS, TIMES, clamp, lerp } from './config.js';
+import { CARS, PAINTS, TIMES, clamp, lerp, isTouch } from './config.js';
 import { roadX, roadY, roadD } from './world.js';
 
 const $ = (id) => document.getElementById(id);
@@ -25,6 +25,11 @@ export class UI {
     this.hintTimer = 0;
     this.buildDial();
     this.bind();
+    /* tablet wording in the intro footer */
+    if (isTouch) {
+      const tip = document.getElementById('intro-tip-text');
+      if (tip) tip.textContent = 'Hold GAS to drive · side pads to steer · pause to stop';
+    }
   }
 
   /* ── boot ─────────────────────────────────────────────────── */
@@ -101,28 +106,75 @@ export class UI {
       this.closePanel();
     });
 
-    /* touch */
-    const setSteer = (v) => { this.touchSteer = v; };
-    document.querySelectorAll('[data-steer]').forEach((b) => {
-      const dir = b.dataset.steer === 'left' ? -1 : 1;
-      const on = (e) => { e.preventDefault(); setSteer(dir); b.classList.add('held'); };
-      const off = (e) => { e.preventDefault(); setSteer(0); b.classList.remove('held'); };
-      b.addEventListener('pointerdown', on);
-      b.addEventListener('pointerup', off);
-      b.addEventListener('pointercancel', off);
-      b.addEventListener('pointerleave', off);
-    });
-    document.querySelectorAll('[data-pedal]').forEach((b) => {
-      const kind = b.dataset.pedal;
-      const on = (e) => { e.preventDefault(); this.touch[kind] = 1; b.classList.add('held'); };
-      const off = (e) => { e.preventDefault(); this.touch[kind] = 0; b.classList.remove('held'); };
-      b.addEventListener('pointerdown', on);
-      b.addEventListener('pointerup', off);
-      b.addEventListener('pointercancel', off);
-      b.addEventListener('pointerleave', off);
-    });
+    /* ── touch controls ──────────────────────────────────────
+       Everything is tracked on the window by pointerId rather than on
+       the individual buttons. That means: two fingers can hold gas and
+       steer at once, a thumb can slide from one steering pad to the
+       other, sliding off a pad keeps the pedal down, and a cancelled
+       gesture can never leave the throttle stuck on. */
     this.touch = { gas: 0, brake: 0 };
     this.touchSteer = 0;
+    this.touchHandbrake = false;
+    const held = new Map();      // pointerId → pad element
+
+    const kindOf = (el) => {
+      if (!el || !el.dataset) return null;
+      if (el.dataset.pedal) return 'pedal';
+      if (el.dataset.steer) return 'steer';
+      if (el.dataset.handbrake !== undefined) return 'handbrake';
+      return null;
+    };
+    const padAt = (el) => (el && el.closest ? el.closest('[data-pedal],[data-steer],[data-handbrake]') : null);
+
+    const applyHeld = () => {
+      this.touch.gas = 0;
+      this.touch.brake = 0;
+      this.touchSteer = 0;
+      this.touchHandbrake = false;
+      document.querySelectorAll('.touch [data-pedal],.touch [data-steer],.touch [data-handbrake]')
+        .forEach((b) => b.classList.remove('held'));
+      for (const pad of held.values()) {
+        pad.classList.add('held');
+        const kind = kindOf(pad);
+        if (kind === 'pedal') this.touch[pad.dataset.pedal] = 1;
+        else if (kind === 'steer') this.touchSteer = pad.dataset.steer === 'left' ? -1 : 1;
+        else if (kind === 'handbrake') this.touchHandbrake = true;
+      }
+    };
+
+    const releaseId = (id) => { if (held.delete(id)) applyHeld(); };
+    this.releaseTouch = () => { if (held.size) { held.clear(); applyHeld(); } };
+
+    window.addEventListener('pointerdown', (e) => {
+      const pad = padAt(e.target);
+      if (!pad) return;
+      /* keep the gesture away from the canvas / document handlers */
+      if (e.pointerType === 'touch') e.preventDefault();
+      held.set(e.pointerId, pad);
+      applyHeld();
+      try { pad.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, { capture: true, passive: false });
+
+    /* sliding a thumb from one pad to its neighbour re-assigns it */
+    window.addEventListener('pointermove', (e) => {
+      if (!held.has(e.pointerId) || e.pointerType !== 'touch') return;
+      const pad = padAt(document.elementFromPoint(e.clientX, e.clientY));
+      if (pad && pad !== held.get(e.pointerId) && kindOf(pad) === kindOf(held.get(e.pointerId))) {
+        held.set(e.pointerId, pad);
+        applyHeld();
+      }
+    }, { passive: true });
+
+    window.addEventListener('pointerup', (e) => releaseId(e.pointerId), { capture: true });
+    window.addEventListener('pointercancel', (e) => releaseId(e.pointerId), { capture: true });
+    window.addEventListener('blur', () => this.releaseTouch());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.releaseTouch(); });
+
+    /* a long press must never open the iOS callout or start a drag */
+    document.querySelectorAll('.touch button').forEach((b) => {
+      b.addEventListener('contextmenu', (e) => e.preventDefault());
+      b.addEventListener('dragstart', (e) => e.preventDefault());
+    });
   }
 
   /* ── intro ────────────────────────────────────────────────── */
@@ -183,7 +235,10 @@ export class UI {
     if (name === 'garage') this.renderGarage();
     if (name === 'settings') this.renderSettings();
     if (name === 'map') this.drawMap();
-    requestAnimationFrame(() => sheet.classList.add('on'));
+    /* the panel may have been closed again before the next paint (a tap
+       on Pause then Photo lands inside the same frame on a slow device);
+       don't let a stale frame re-open it */
+    requestAnimationFrame(() => { if (this.state.panel === name) sheet.classList.add('on'); });
     $('scrim').classList.add('on');
     $('hud').style.pointerEvents = 'none';
     document.body.classList.add('panel-open');
@@ -552,6 +607,7 @@ export class UI {
 
   hideHint() {
     $('hint')?.classList.add('fade');
+    $('touch-hint')?.classList.add('fade');
   }
 
   setPhoto(on) {

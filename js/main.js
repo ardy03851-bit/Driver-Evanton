@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CARS, PAINTS, QUALITY, TIMES, clamp, lerp, damp, smoothstep, isTouch, reducedMotion,
+  CARS, PAINTS, QUALITY, TIMES, clamp, lerp, damp, smoothstep, isTouch, isTablet, reducedMotion,
 } from './config.js';
 import { loadAssets } from './assets.js';
 import { World, roadX, roadD, surfaceHeight, roadInfo, roadYaw } from './world.js';
@@ -17,11 +17,13 @@ const saved = (() => {
   try { return JSON.parse(localStorage.getItem(STORE) || '{}'); } catch { return {}; }
 })();
 
+/* A tablet GPU at 2× devicePixelRatio has roughly a quarter of the
+   fill rate of a desktop at 1×, so start there rather than at "high". */
 const settings = {
   car: CARS.some((c) => c.id === saved.car) ? saved.car : CARS[0].id,
   paint: saved.paint || CARS[0].paint,
   time: TIMES[saved.time] ? saved.time : 'golden',
-  quality: QUALITY[saved.quality] ? saved.quality : (isTouch ? 'balanced' : 'high'),
+  quality: QUALITY[saved.quality] ? saved.quality : (isTouch ? (isTablet ? 'balanced' : 'eco') : 'high'),
   auto: saved.auto !== false,
   assist: !!saved.assist,
   sound: !!saved.sound,
@@ -75,7 +77,13 @@ async function init() {
     onTime: (t) => { settings.time = t; ui.state.time = t; world.setTime(t); applyLights(); ui.toast(`${TIMES[t].label} light`, TIMES[t].icon); persist(); },
     onQuality: (q) => { settings.quality = q; applyQuality(); persist(); },
     onAuto: (a) => { settings.auto = a; if (vehicle) vehicle.auto = a; persist(); },
-    onAssist: (a) => { settings.assist = a; if (vehicle) vehicle.assist = a; persist(); },
+    onAssist: (a) => {
+      settings.assist = a;
+      if (vehicle) vehicle.assist = a;
+      ui.state.assist = a;
+      ui.syncButtons({ assist: a });
+      persist();
+    },
     onSoundToggle: toggleSound,
     onVolume: (v) => { settings.volume = v; audio.setVolume(v); persist(); },
     onCamera: cycleCamera,
@@ -147,6 +155,7 @@ async function init() {
   audio = new SimAudio();
   audio.volume = settings.volume;
   audio.voiceFor(vehicle);
+  if (settings.sound) audio.enabled = true;
 
   /* camera starts on a slow orbit around the car for the intro */
   camera.position.set(vehicle.x + 6.4, vehicle.y + 2.1, vehicle.z - 5.4);
@@ -214,6 +223,19 @@ function previewCar(id, paint) {
   vehicle.assist = settings.assist;
   Object.assign(vehicle, state);
   vehicle.spec = def.spec;
+
+  /* swapping cars at speed must not drop the new car into first gear —
+     pick the ratio that actually matches the speed you are doing */
+  const speed = Math.abs(vehicle.vLong);
+  if (speed > 1) {
+    let best = 1;
+    for (let g = 1; g <= def.spec.gears.length; g++) {
+      if (vehicle.maxSpeedInGear(g) / 3.6 >= speed) best = g;
+    }
+    vehicle.gear = best;
+    const ratio = def.spec.gears[best - 1] * def.spec.final;
+    vehicle.rpm = clamp((speed / (2 * Math.PI * def.spec.tyreR)) * 60 * ratio, def.spec.idle, def.spec.limiter);
+  }
   createAsset(def, settings.paint);
   carAsset.setLights(settings.time === 'dusk');
   ui.setCar(id, settings.paint);
@@ -243,7 +265,18 @@ function startDriving() {
   lookTarget.set(vehicle.x, vehicle.y + 1.0, vehicle.z);
   if (!hintShown) {
     hintShown = true;
-    setTimeout(() => ui.hideHint(), 11000);
+    if (!isTouch) setTimeout(() => ui.hideHint(), 11000);
+    /* on a tablet, start rolling on the assist so the first thing you
+       see is the car moving — tidy up by touching the controls */
+    if (isTouch) {
+      settings.assist = true;
+      vehicle.assist = true;
+      ui.state.assist = true;
+      ui.syncButtons({ assist: true });
+      ui.toast('Driver assist on — take the wheel any time', 'compass');
+      /* the pad hint can wait until the pods and toast have settled */
+      setTimeout(() => ui.hideHint(), 4000);
+    }
   }
 }
 
@@ -337,8 +370,11 @@ function updateCamera(dt) {
   chaseLook.lerp(lookTarget, 1 - Math.exp(-(k * 1.12) * dt));
   camera.lookAt(chaseLook);
 
-  const speedFov = 54 + smoothstep(20, 320, vehicle.speedKmh) * 12;
-  fovTarget = settings.camera === 2 ? 60 : speedFov;
+  /* a tall portrait screen needs a wider lens to keep the road in shot */
+  const portrait = innerHeight > innerWidth * 1.15;
+  const fovBase = portrait ? 66 : 54;
+  const speedFov = fovBase + smoothstep(20, 320, vehicle.speedKmh) * 12;
+  fovTarget = settings.camera === 2 ? fovBase + 6 : speedFov;
   camera.fov = damp(camera.fov, fovTarget, 3.2, dt);
   camera.updateProjectionMatrix();
 
@@ -513,32 +549,75 @@ function togglePhoto() {
 function snapshot() {
   photoSnap = true;
   renderer.render(scene, camera);
-  renderer.domElement.toBlob((blob) => {
-    if (!blob) { ui.toast('Could not save image', 'close'); return; }
+  const name = `evanton-${settings.car}-${Date.now().toString(36)}.png`;
+  const done = (href, revoke) => {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `evanton-${settings.car}-${Date.now().toString(36)}.png`;
+    a.href = href;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    a.remove();
+    if (revoke) setTimeout(() => URL.revokeObjectURL(href), 6000);
     ui.toast('Photo saved to downloads', 'download');
-  }, 'image/png');
+  };
+  /* Safari on iPad ignores the download attribute on blob URLs, so hand
+     the PNG to a new tab where it can be saved to Photos instead. */
+  const isSafari = /iP(hone|ad|od)|Macintosh/.test(navigator.userAgent) && !/Chrome|CriOS|FxiOS/.test(navigator.userAgent);
+  const finish = (blob) => {
+    if (!blob) { ui.toast('Could not save image', 'close'); return; }
+    const href = URL.createObjectURL(blob);
+    if (isSafari && isTouch) {
+      const win = window.open();
+      if (win) {
+        win.document.body.style.margin = '0';
+        win.document.body.style.background = '#000';
+        const img = win.document.createElement('img');
+        img.src = href;
+        img.alt = 'Evanton photo';
+        img.style.cssText = 'width:100%;display:block';
+        win.document.body.appendChild(img);
+        ui.toast('Long-press the photo to save it', 'download');
+        setTimeout(() => URL.revokeObjectURL(href), 60000);
+        return;
+      }
+    }
+    done(href, true);
+  };
+  if (renderer.domElement.toBlob) renderer.domElement.toBlob(finish, 'image/png');
+  else finish(null);
   photoSnap = false;
 }
 
 /* ═══════════════════════════════════════════════════════════════
    input
    ═══════════════════════════════════════════════════════════════ */
-function readInput() {
+let touchSteerAmount = 0;
+
+function readInput(dt = 1 / 60) {
   const touch = ui.touch || { gas: 0, brake: 0 };
-  const left = keys.has('a') || keys.has('arrowleft') || ui.touchSteer === -1;
-  const right = keys.has('d') || keys.has('arrowright') || ui.touchSteer === 1;
+  const keyLeft = keys.has('a') || keys.has('arrowleft');
+  const keyRight = keys.has('d') || keys.has('arrowright');
   const gas = keys.has('w') || keys.has('arrowup') || !!touch.gas;
   const brake = keys.has('s') || keys.has('arrowdown') || !!touch.brake;
+
+  /* On the iPad the steering pad is a pair of buttons, so holding one
+     ramps the lock in from a gentle nudge to full lock. A single tap
+     gives a small correction instead of throwing the car at the verge.
+     The physics also smooths the wheel itself, so this ramp can be
+     quick without ever being a step change. */
+  const want = (keyRight ? 1 : 0) + (ui.touchSteer || 0) - (keyLeft ? 1 : 0);
+  const target = clamp(want, -1, 1);
+  const rate = target === 0 ? 11 : 7.5;
+  const frame = Math.min(Math.max(dt, 0.001), 0.1);
+  touchSteerAmount += (target - touchSteerAmount) * (1 - Math.exp(-rate * frame));
+  if (Math.abs(touchSteerAmount) < 0.002) touchSteerAmount = 0;
+
   return {
     throttle: gas ? 1 : 0,
     brake: brake ? 1 : 0,
-    steer: (right ? 1 : 0) - (left ? 1 : 0),
-    handbrake: keys.has(' '),
+    steer: clamp(touchSteerAmount, -1, 1),
+    handbrake: keys.has(' ') || !!ui.touchHandbrake,
     shiftUp: false,
     shiftDown: false,
   };
@@ -570,20 +649,60 @@ function bindGlobalEvents() {
   addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
   addEventListener('blur', () => keys.clear());
 
+  /* iOS: stop the page zooming / bouncing while driving */
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+  document.addEventListener('dblclick', (e) => e.preventDefault());
+  document.addEventListener('touchmove', (e) => {
+    if (e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+
+  /* pinch to zoom in photo mode (two fingers on the glass) */
+  const pointers = new Map();
+  let pinchStart = 0, radiusStart = 0;
+  const spread = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+
   /* mouse / touch orbit in photo mode */
   const canvas = renderer.domElement;
   canvas.addEventListener('pointerdown', (e) => {
     if (!photo) return;
-    orbit.dragging = true;
-    orbit.lx = e.clientX; orbit.ly = e.clientY;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      pinchStart = spread();
+      radiusStart = orbit.radius;
+      orbit.dragging = false;
+    } else if (pointers.size === 1) {
+      orbit.dragging = true;
+      orbit.lx = e.clientX; orbit.ly = e.clientY;
+    }
     canvas.setPointerCapture?.(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!photo || !orbit.dragging) return;
+    if (!photo) return;
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const d = spread();
+      if (pinchStart > 8) orbit.radius = clamp(radiusStart * (pinchStart / Math.max(d, 1)), 3.4, 22);
+      return;
+    }
+    if (!orbit.dragging) return;
     orbit.theta -= (e.clientX - orbit.lx) * 0.005;
     orbit.phi = clamp(orbit.phi - (e.clientY - orbit.ly) * 0.004, 0.35, 1.55);
     orbit.lx = e.clientX; orbit.ly = e.clientY;
   });
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStart = 0;
+    if (pointers.size === 1) {
+      const p = [...pointers.values()][0];
+      orbit.dragging = true;
+      orbit.lx = p.x; orbit.ly = p.y;
+    } else if (pointers.size === 0) orbit.dragging = false;
+  };
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
   addEventListener('pointerup', () => { orbit.dragging = false; });
   canvas.addEventListener('wheel', (e) => {
     if (!photo) return;
@@ -591,7 +710,10 @@ function bindGlobalEvents() {
     orbit.radius = clamp(orbit.radius + e.deltaY * 0.006, 3.4, 22);
   }, { passive: false });
 
-  addEventListener('resize', resize);
+  addEventListener('resize', scheduleResize);
+  addEventListener('orientationchange', scheduleResize);
+  window.visualViewport?.addEventListener('resize', scheduleResize);
+  window.visualViewport?.addEventListener('scroll', scheduleResize);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && mode === 'driving' && !panelOpen) ui.openPanel('pause');
   });
@@ -611,10 +733,22 @@ async function toggleFullscreen() {
 
 function resize() {
   if (!renderer || !camera) return;
-  const w = innerWidth, h = innerHeight;
+  /* iOS reports the layout viewport before the toolbar settles, so use
+     the visual viewport when it is available and re-apply on the next
+     frame as well — otherwise rotating an iPad leaves black bands. */
+  const vv = window.visualViewport;
+  const w = Math.max(1, Math.round(vv ? vv.width : innerWidth));
+  const h = Math.max(1, Math.round(vv ? vv.height : innerHeight));
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(w, h);
+  renderer.setSize(w, h, false);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY[settings.quality]?.dpr ?? 1.5));
+}
+
+function scheduleResize() {
+  resize();
+  requestAnimationFrame(resize);
+  setTimeout(resize, 220);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -630,8 +764,9 @@ function loop(now) {
   elapsed += rawDt;
 
   const paused = panelOpen || photo;
-  const input = readInput();
   const simDt = paused ? 0 : rawDt;
+  if (paused) { ui.releaseTouch?.(); keys.clear(); }
+  const input = readInput(rawDt);
 
   /* physics */
   accumulator = Math.min(accumulator + simDt, 0.12);
@@ -663,12 +798,14 @@ function loop(now) {
   if (frameTime > 3) {
     const avg = fpsSamples / frameTime;
     frameTime = 0; fpsSamples = 0;
-    if (avg < 42 && !isTouch && renderer.getPixelRatio() > 1.05) {
+    const floor = isTouch ? 1 : 1.05;
+    if (avg < 46 && renderer.getPixelRatio() > floor + 0.01) {
       lowFpsTime += 3;
       if (lowFpsTime >= 6) {
         lowFpsTime = 0;
-        renderer.setPixelRatio(Math.max(1, renderer.getPixelRatio() - 0.2));
-        ui.toast('Resolution lowered to hold 60 fps', 'bolt');
+        renderer.setPixelRatio(Math.max(floor, renderer.getPixelRatio() - (isTouch ? 0.15 : 0.2)));
+        renderer.setSize(innerWidth, innerHeight, false);
+        ui.toast('Resolution lowered to hold frame rate', 'bolt');
       }
     } else lowFpsTime = 0;
   }
@@ -694,7 +831,14 @@ window.evanton = {
     speed: (kmh) => { vehicle.vLong = clamp(kmh / 3.6, 0, 120); },
     orbit: (theta, phi, radius) => { orbit.theta = theta; orbit.phi = phi; orbit.radius = radius; },
     camera: (x, y, z) => { camera.position.set(x, y, z); },
-    input: () => ({ keys: [...keys], ...readInput() }),
+    input: () => ({ keys: [...keys], ...readInput(0.016) }),
+    jump: (s) => { vehicle.reset(s); carRig.position.set(vehicle.x, vehicle.y, vehicle.z); },
+    streaming: () => ({ chunks: world?.terrain.size, roads: world?.roads.size, pending: world?.pending.length }),
+    controls: () => ({
+      gas: ui.touch?.gas, brake: ui.touch?.brake, steer: ui.touchSteer,
+      handbrake: ui.touchHandbrake, held: document.querySelectorAll('.touch .held').length,
+      steerAmount: +touchSteerAmount.toFixed(3),
+    }),
     state: () => ({ vLong: +vehicle.vLong.toFixed(2), steer: +vehicle.steer.toFixed(3), auto: vehicle.auto, gear: vehicle.gear, rpm: Math.round(vehicle.rpm), mode, photo, panelOpen, paused: vehicle.paused }),
     wheels: () => (carAsset?.wheels || []).map((w) => ({
       front: !!w.front,

@@ -2,8 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#08090b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Evanton">
 <title>Evanton — Drive</title>
 <meta name="description" content="A quiet stretch of road, six Ferraris, and nothing else to do but drive.">
 <link rel="stylesheet" href="css/app.css">
@@ -72,7 +76,7 @@
 </div>
 
 <!-- ═══════════ in-game HUD ═══════════ -->
-<div class="hud" id="hud" inert>
+<div class="hud" id="hud">
 
   <!-- left: journey pod -->
   <aside class="pod pod-trip" id="pod-trip" aria-label="Journey">
@@ -172,15 +176,21 @@
     <span class="hint-sep"></span><span class="hint-key wide">C</span><span class="hint-txt">camera</span>
   </div>
 
+  <!-- touch hint, shown for a moment on tablets -->
+  <div class="hint touch-hint" id="touch-hint">
+    <span class="hint-txt">Hold GAS to go · arrows to steer · BRAKE to stop</span>
+  </div>
+
   <!-- touch -->
-  <div class="touch" id="touch" aria-hidden="true">
+  <div class="touch" id="touch">
     <div class="touch-steer">
-      <button class="touch-pad glassy" data-steer="left"><svg class="ic"><use href="#i-chevron"/></svg></button>
-      <button class="touch-pad glassy" data-steer="right"><svg class="ic"><use href="#i-chevron"/></svg></button>
+      <button class="touch-pad glassy" data-steer="left" aria-label="Steer left"><svg class="ic"><use href="#i-chevron"/></svg></button>
+      <button class="touch-pad glassy" data-steer="right" aria-label="Steer right"><svg class="ic"><use href="#i-chevron"/></svg></button>
     </div>
     <div class="touch-pedals">
-      <button class="touch-pad brake glassy" data-pedal="brake"><span>BRAKE</span></button>
-      <button class="touch-pad gas glassy" data-pedal="gas"><span>GAS</span></button>
+      <button class="touch-pad handbrake glassy" data-handbrake aria-label="Handbrake"><svg class="ic"><use href="#i-pause"/></svg></button>
+      <button class="touch-pad brake glassy" data-pedal="brake" aria-label="Brake"><span>BRAKE</span></button>
+      <button class="touch-pad gas glassy" data-pedal="gas" aria-label="Accelerate"><span>GAS</span></button>
     </div>
   </div>
 </div>
@@ -211,7 +221,7 @@
 
   <div class="intro-foot">
     <div class="intro-cars" id="intro-cars"><!-- filled by ui --></div>
-    <div class="intro-tip"><svg class="ic"><use href="#i-keyboard"/></svg><span>WASD to drive · G garage · C camera · Esc pause</span></div>
+    <div class="intro-tip"><svg class="ic"><use href="#i-keyboard"/></svg><span id="intro-tip-text">WASD to drive · G garage · C camera · Esc pause</span></div>
   </div>
 </div>
 
@@ -266,6 +276,7 @@
       </div>
     </div>
     <div class="pause-foot"><span>R</span> recover to road <i></i><span>Tab</span> map <i></i><span>F</span> fullscreen</div>
+    <div class="pause-foot touch-foot"><span>Photo</span> to stop and look <i></i><span>Garage</span> to change car</div>
   </div>
 </section>
 

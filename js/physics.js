@@ -45,6 +45,7 @@ export class Vehicle {
     this.rollVel = 0;
     this.reverse = false;
     this.brakeHold = 0;
+    this.reverseTimer = 0;
     this.slip = 0;
     this.surface = 'tarmac';
     this.distance = 0;
@@ -106,10 +107,14 @@ export class Vehicle {
     const speed = Math.hypot(this.vLong, this.vLat);
     const speedKmh = speed * 3.6;
 
-    /* ── steering: speed-sensitive lock, rate limited ───────── */
-    const lock = sp.steerLock * (1 - 0.64 * smoothstep(6, 68, speedKmh));
+    /* ── steering: speed-sensitive lock, rate limited ─────────
+       At 220 km/h a 0.36 rad lock is 20 m/s² of yaw demand — the car
+       simply spun. The lock now falls away with speed so full lock is
+       always *just* at the edge of the front tyres' grip, which is
+       what makes a fast car feel planted yet still adjustable. */
+    const lock = sp.steerLock / (1 + Math.max(0, speedKmh - 35) * 0.031);
     const targetSteer = steerIn * lock;
-    this.steer = damp(this.steer, targetSteer, steerIn === 0 ? 14 : 9.5, dt);
+    this.steer = damp(this.steer, targetSteer, steerIn === 0 ? 14 : 11, dt);
     this.steer = clamp(this.steer, -lock, lock);
 
     /* ── throttle / brake smoothing ─────────────────────────── */
@@ -160,7 +165,7 @@ export class Vehicle {
       driveForce = (tq * gearRatio * 0.93) / sp.tyreR;
       driveForce *= this.throttle;
     }
-    if (this.reverse) driveForce = -clamp(this.brake * this.spec.mass * 3.2, 0, 9000);
+    if (this.reverse) driveForce = 0;
 
     /* ── loads & traction limit ──────────────────────────────── */
     const m = sp.mass;
@@ -169,7 +174,7 @@ export class Vehicle {
     const FzF = Math.max(400, m * G * sp.distF - transfer + down * 0.42);
     const FzR = Math.max(400, m * G * (1 - sp.distF) + transfer + down * 0.58);
     const muF = sp.gripF * surf.grip;
-    const muR = sp.gripR * surf.grip * (this.handbrake ? 0.48 : 1);
+    const muR = sp.gripR * surf.grip * (this.handbrake ? 0.34 : 1);
 
     const awdRear = sp.drive === 'AWD' ? 1 - sp.driveBias : 1;
     const tractionRear = muR * FzR;
@@ -185,27 +190,52 @@ export class Vehicle {
     const engineBrake = (this.throttle < 0.04 && !this.reverse)
       ? sp.engineBrake * m * 0.55 * vSign * smoothstep(4, 30, absV) * 0.12 : 0;
 
+    /* ── brakes ───────────────────────────────────────────────
+       The brake force is capped by the friction circle of the four
+       tyres (roughly 1 g for these cars on tarmac). The old code
+       used a per-step "stopping distance" cap that resolved to
+       ~3 g at 100 km/h, which outran the tyres and dragged the car
+       off the road whenever you touched the pedal. */
     let brakeForce = 0;
     const brakeCap = sp.brake * m * G * clamp(surf.grip, 0.35, 1) * 0.62;
-    if (this.brake > 0.01) {
-      const want = brakeCap * this.brake;
-      const stopping = (Math.abs(this.vLong) * m) / Math.max(dt, 1 / 240);
-      brakeForce = vSign * Math.min(want, stopping * 0.85);
+    if (this.brake > 0.01 && !this.reverse) {
+      brakeForce = vSign * brakeCap * this.brake;
     }
-    if (this.handbrake) {
-      const hb = (Math.abs(this.vLong) * m) / Math.max(dt, 1 / 240);
-      brakeForce += vSign * Math.min(sp.brake * m * G * 0.42, hb * 0.55);
+    const rearBrakeShare = 0.34;
+    if (this.handbrake && !this.reverse) {
+      brakeForce += vSign * brakeCap * 0.55 * rearBrakeShare;
     }
 
     /* clutch at crawl: engine can't push through brakes */
     if (this.brake > 0.5 && Math.abs(this.vLong) < 0.35) driveForce = 0;
 
-    let fLong = driveForce - drag - roll - engineBrake - brakeForce;
+    /* ── terrain slope ────────────────────────────────────────
+       Gravity along the hill. Uphill costs speed, downhill adds it.
+       Without this the car climbed 45° of mountainside at 280 km/h
+       as though it were flat. */
+    let slopeForce = 0;
+    if (!info.onRoad) {
+      const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+      const hw = sp.wheelbase * 0.5;
+      const grade = (surfaceHeight(this.x + fx * hw, this.z + fz * hw)
+                   - surfaceHeight(this.x - fx * hw, this.z - fz * hw)) / sp.wheelbase;
+      slopeForce = -m * G * clamp(grade, -1, 1) * 0.85;
+    }
 
-    /* reverse engagement */
+    /* a brake (or engine) force may never reverse the direction of
+       travel inside a step — it can only bring the car to a stop */
+    let brakeLimited = brakeForce;
+    if (brakeForce !== 0 && Math.abs(this.vLong) > 1e-6) {
+      const momentum = Math.abs(this.vLong) * m;
+      const room = momentum / Math.max(dt, 1e-4);
+      if (Math.abs(brakeForce) + Math.abs(engineBrake) > room) brakeLimited = Math.sign(vSign) * room;
+    }
+    let fLong = driveForce - drag - roll - engineBrake - brakeLimited + slopeForce;
+
+    /* reverse engagement — hold the brake at a standstill */
     if (!this.reverse && brakeIn > 0.6 && speed < 0.35) {
       this.brakeHold += dt;
-      if (this.brakeHold > 0.55) {
+      if (this.brakeHold > 0.5) {
         this.reverse = true;
         this.gear = 1;
         this.brakeHold = 0;
@@ -213,18 +243,38 @@ export class Vehicle {
     } else if (!(brakeIn > 0.5 && speed < 0.4)) {
       this.brakeHold = 0;
     }
-    if (this.reverse && (throttleIn > 0.15 || this.vLong > 0.15)) {
-      this.reverse = false;
-      this.gear = 1;
+    /* leave reverse on the throttle, or once the car has been rolling
+       forwards for a moment (so releasing the brake doesn't strand it) */
+    if (this.reverse) {
+      if (throttleIn > 0.12) { this.reverse = false; this.gear = 1; }
+      else if (this.vLong > 0.6) {
+        this.reverseTimer = (this.reverseTimer || 0) + dt;
+        if (this.reverseTimer > 0.25) { this.reverse = false; this.gear = 1; this.reverseTimer = 0; }
+      } else this.reverseTimer = 0;
     }
     if (this.reverse) {
-      // brake pedal is reverse throttle when already rolling back
-      if (this.vLong < -3.2) fLong = Math.max(fLong, 0);
+      /* in reverse the brake pedal is the reverse throttle, and the
+         throttle drives forwards out of reverse. The brake force
+         computed above is skipped while in reverse. */
+      const revForce = brakeIn * sp.mass * 2.4 + (throttleIn > 0.05 ? throttleIn * sp.mass * 1.2 : 0);
+      fLong = -revForce * (this.vLong < -8.5 ? 0 : 1);
+    } else if (this.vLong < -0.05 && brakeIn < 0.1 && throttleIn < 0.1) {
+      /* rolling back out of reverse: coast to a stop rather than run away */
+      fLong = 0;
     }
 
     /* ── low speed stabilisation ────────────────────────────── */
     const lowBlend = 1 - smoothstep(1.6, 4.6, speed);
     const speedLong = Math.max(Math.abs(this.vLong), 0.85);
+
+    /* ── bogged down ──────────────────────────────────────────
+       In deep grass or gravel a standing start is hard work (half of
+       what you ask for), but asking for full throttle on a slow car
+       still gets you moving instead of leaving you stuck. */
+    if (!info.onRoad && speed < 6 && throttleIn > 0.1) {
+      const urgency = smoothstep(6, 1.5, speed) * smoothstep(0.1, 0.9, throttleIn);
+      fLong += urgency * sp.mass * 1.1;
+    }
 
     /* ── tyre model ──────────────────────────────────────────── */
     const a = sp.wheelbase * (1 - sp.distF);
@@ -234,14 +284,32 @@ export class Vehicle {
     const alphaR = Math.atan2(this.vLat - this.yawRate * b, speedLong);
     this.slip = Math.max(Math.abs(alphaF), Math.abs(alphaR));
 
-    const Fyf = -muF * FzF * Math.sin(1.36 * Math.atan(9.5 * alphaF));
-    const Fyr = -muR * FzR * Math.sin(1.42 * Math.atan(9.0 * alphaR));
+    /* ── friction ellipse ─────────────────────────────────────
+       A tyre can only make so much force. Longitudinal force used
+       for drive/brake is spent from the same budget the lateral
+       force needs, so braking hard mid-corner washes the front out
+       and locking the rear steps the tail out. This is what keeps
+       the car on the road when you brake — previously fLong could
+       reach 3 g and slide the car straight off into the hills. */
+    const driveMaxF = muF * FzF * 1.0;
+    const driveMaxR = muR * FzR * 1.0;
+    const fxFront = sp.drive === 'AWD' ? -driveForce * sp.driveBias : 0;
+    const fxRear = -driveForce * (sp.drive === 'AWD' ? 1 - sp.driveBias : 1) - brakeForce * 0.62;
+    const restF = 1 - clamp(Math.abs(fxFront) / Math.max(driveMaxF, 1), 0, 1) ** 2;
+    const restR = 1 - clamp(Math.abs(fxRear) / Math.max(driveMaxR, 1), 0, 1) ** 2;
+    const holdF = Math.sqrt(Math.max(0, restF));
+    const holdR = Math.sqrt(Math.max(0, restR));
+
+    const Fyf = -muF * FzF * holdF * Math.sin(1.36 * Math.atan(9.5 * alphaF));
+    const Fyr = -muR * FzR * holdR * Math.sin(1.42 * Math.atan(9.0 * alphaR));
 
     const cos = Math.cos(this.steer);
     const Iz = m * (sp.wheelbase * sp.wheelbase * 0.21 + 1.35);
     let yawAcc = (a * Fyf * cos - b * Fyr) / Iz;
     // yaw damping + gentle stability control at the limit
     yawAcc -= this.yawRate * (0.9 + (1 - sp.tcs) * 2.2);
+    // handbrake and power oversteer: the rear steps out
+    yawAcc += (this.handbrake ? 2.6 : 0) * clamp(this.steer / 0.3, -1, 1) * smoothstep(4, 18, absV);
 
     /* ── integrate ───────────────────────────────────────────── */
     if (lowBlend > 0.001) {
@@ -254,10 +322,40 @@ export class Vehicle {
     }
     this.vLong += (fLong / m + this.yawRate * this.vLat) * dt;
 
+    /* ── surface scrubbing ────────────────────────────────────
+       Grass, gravel and sand drag the car down hard, so leaving the
+       tarmac actually costs you speed instead of being a free
+       shortcut. Applied as a velocity decay, never as a force, so it
+       can only slow the car — it can never push it backwards. */
+    if (absV > 0.05) {
+      const scrub = (surf.drag - 1) * 0.14;
+      if (scrub > 0) this.vLong *= Math.exp(-scrub * dt);
+    }
+
+    /* ── traction budget ──────────────────────────────────────
+       The bike model above is only as good as its force budget: if
+       the lateral velocity is allowed to grow unchecked the couple
+       term (yawRate × vLat) feeds straight back into forward speed and
+       the car accelerates to 350 km/h while braking. Clamp the total
+       horizontal acceleration to what 1.35 g of tyre can actually
+       deliver (a little headroom so slides still feel alive). */
+    {
+      const maxA = 1.35 * G * clamp(surf.grip, 0.3, 1);
+      const spd = Math.hypot(this.vLong, this.vLat);
+      if (spd > maxA * 0.55) {
+        const capLat = Math.sqrt(Math.max(0, (maxA * maxA) - (fLong / m) ** 2)) * Math.max(0.55, 1 - spd / 160);
+        this.vLat = clamp(this.vLat, -Math.max(4, capLat), Math.max(4, capLat));
+      }
+      this.yawRate = clamp(this.yawRate, -2.4, 2.4);
+      /* gravity downhill can never out-accelerate the tyres */
+      const maxLong = maxA * 2.1;
+      fLong = clamp(fLong, -maxLong * m, maxLong * m);
+    }
+
     // hard safety rails
     if (!isFinite(this.vLong) || !isFinite(this.vLat) || !isFinite(this.yawRate)) this.reset(40);
     this.vLong = clamp(this.vLong, -12, 125);
-    this.vLat = clamp(this.vLat, -35, 35);
+    this.vLat = clamp(this.vLat, -30, 30);
 
     this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
@@ -283,7 +381,10 @@ export class Vehicle {
     this.ay = damp(this.ay, latAcc, 8, dt);
     this._aySmooth = damp(this._aySmooth, latAcc, 5, dt);
 
-    const wantPitch = terrainPitch * 0.55 + clamp(this._axSmooth * 0.0055, -0.055, 0.055);
+    /* sign check: the body is drawn with rotation.x = -pitch, so a
+       positive pitch tips the nose up. Braking (negative ax) must
+       therefore give a positive pitch → nose dives. */
+    const wantPitch = terrainPitch * 0.55 - clamp(this._axSmooth * 0.0062, -0.06, 0.06);
     const wantRoll = terrainRoll * 0.5 + clamp(this._aySmooth * 0.0045, -0.06, 0.06);
     const k = 105, c = 2 * Math.sqrt(k) * 1.15;
     this.pitchVel += (k * (wantPitch - this.pitch) - c * this.pitchVel) * dt;

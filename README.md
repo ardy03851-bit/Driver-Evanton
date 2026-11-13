@@ -56,6 +56,7 @@ spring settling onto the terrain, never an arcade bounce.
 | --- | --- |
 | `W` `A` `S` `D` / arrows | drive |
 | `Space` | handbrake |
+| hold a steering pad | steer (ramps in, tap for a nudge) |
 | `C` | camera (chase / hood / wide) |
 | `U` | driver assist (self-driving) |
 | `R` | recover to the road |
@@ -66,11 +67,22 @@ spring settling onto the terrain, never an arcade bounce.
 | `F` | fullscreen |
 | `Esc` | pause |
 
-Touch controls appear automatically on coarse-pointer devices.
+On an iPad or iPhone the touch controls appear automatically: steering pads
+under the left thumb, handbrake / brake / gas under the right, with the
+instrument cluster moved out of their way (top-right in landscape, top-right
+with the odometer below in portrait). Every pad captures its own finger, so
+sliding a thumb off the glass keeps the pedal down until you lift it, and
+letting go anywhere releases everything.
+
+The game starts the driver assist on touch devices so the car is already
+moving when the intro clears — hold a steering pad or the brake to take over.
+Quality defaults to *Balanced* on a tablet and the pixel ratio adapts if the
+frame rate drops.
 
 Photo mode freezes the world and gives you an orbit camera: drag to orbit, scroll
 or pinch to zoom, `P` / `Esc` (or the on-screen buttons) to exit, and **Capture**
-to save a PNG.
+to save a PNG (on iPad the image opens in a new tab so you can long-press it into
+Photos).
 
 ## Interface
 
